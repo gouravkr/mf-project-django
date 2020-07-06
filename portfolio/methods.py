@@ -2,6 +2,8 @@ from django.db import connection
 
 import pandas as pd
 
+from .utils import xirr
+
 class User:
     def __init__(self, user_id):
         self.user_id = user_id
@@ -129,15 +131,15 @@ class UserPortfolio(User):
         return xirr_perc
 
     def calc_fund_xirr(self):
-        transactions = self.transaction_history[['amfi_code', 'trx_date', 'trx_type', 'amount', 'units']]
+        trx = self.transaction_history[['amfi_code', 'trx_date', 'trx_type', 'amount', 'units']]
         trx.loc[trx['trx_type'] == 'RED', 'units'] *= -1
         trx.loc[trx['trx_type'] == 'RED', 'amount'] *= -1
-        values = transactions.groupby('amfi_code').sum().round(4).reset_index()
-        values = values.merge(nav).eval("value = units*nav*-1").round(2)
+        values = trx.groupby('amfi_code').sum().round(4).reset_index()
+        values = values.merge(self.all_navs).eval("value = units*nav*-1").round(2)
         values = values[['amfi_code', 'date', 'value']]
         values['trx_type'] = "cur_val"
         values.columns = ['amfi_code', 'trx_date', 'amount', 'trx_type']
-        trx_with_val = transactions.append(values)
+        trx_with_val = trx.append(values)
         fund_xirr = trx_with_val.groupby('amfi_code').apply(lambda x: xirr(x, date_column='trx_date'))
         fund_xirr = pd.DataFrame(fund_xirr).reset_index()
         fund_xirr.columns = ['amfi_code', 'xirr']
