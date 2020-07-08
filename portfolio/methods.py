@@ -8,20 +8,22 @@ class User:
     def __init__(self, user_id):
         self.user_id = user_id
 
-    def get_folios(self, amfi_code):
-        query = """select uf.user_id, uf.folio, uf.amc_id, uf.is_primary 
-                    from user_folios uf 
-                    join fund_master fm on uf.amc_id = fm.amc_id 
-                    where fm.amfi_code = %s and user_id = %s
+    def get_folios(self, amfi_code=None):
+        query = """select * from user_folios uf 
+                    join amc_master am on am.amc_id = uf.amc_id 
+                    where uf.user_id = %s
                 """
-        folios = pd.read_sql_query(query, connection, params=[amfi_code, self.user_id])
+        params = [self.user_id]
+        if amfi_code is not None:
+            params.append(amfi_code)
+            query += 'and am.amc_id = (select amc_id from fund_master fm where amfi_code = %s)'
+        folios = pd.read_sql_query(query, connection, params=params)
         if len(folios) == 0:
             return({"message": "No folios found"})
         return folios.to_dict(orient='records')
 
-    def get_bank_list(self):
-        query = "select * from bank_details where user_id = %s"
-        banks = pd.read_sql_query("select * from bank_details where user_id = %s", connection, [self.user_id])
+    def get_banks(self):
+        banks = pd.read_sql_query("select * from bank_details where user_id = %s", connection, params=[self.user_id])
         return banks.to_dict(orient='records')
 
 
@@ -32,14 +34,14 @@ class UserInvestmentManager(User):
         insert_query = """
             insert into transaction_history 
             (user_id, amfi_code, folio, trx_type, trx_date, nav, amount, units)
-            values (%(user_id)s, %(amfi_code)s, %(folio)s, 'INV', %(date)s, %(nav)s, %(amount)s, %(units)s)
+            values (%(user_id)s, %(amfi_code)s, %(folio)s, 'INV', %(trx_date)s, %(nav)s, %(amount)s, %(units)s)
         """
         nav_query = """select * from nav_history 
                         where amfi_code = %s and date > %s
                         order by date limit 1
                     """
         with connection.cursor() as cur:
-            cur.execute(nav_query, [kwargs['amfi_code'], kwargs['date']])
+            cur.execute(nav_query, [kwargs['amfi_code'], kwargs['trx_date']])
             records = cur.fetchall()
             kwargs['nav'] = records[0][2]
         if 'amount' not in kwargs:
@@ -55,12 +57,10 @@ class UserInvestmentManager(User):
             conn.execute(insert_query, kwargs)
         return("success")
 
-    def create_folio(self, amc_id, folio, primary=False):
-        create_query = """
-            insert into user_folios values(
-                %(user_id)s, %(folio)s, %(amc_id)s, %(primary)s
-            )
-            """
+    def create_folio(self, amc_id, folio=None, primary=False):
+        create_query = """insert into user_folios values(
+                        %(user_id)s, %(folio)s, %(amc_id)s, %(primary)s
+                    )"""
         folio = str(np.random.randint(100000000)) if folio is None else folio
         params = {'user_id': self.userid, 'folio': folio,
                   'amc_id': amc_id, 'primary': primary}
