@@ -1,72 +1,186 @@
-from django.shortcuts import render
-from django.http import JsonResponse, HttpResponse
-from django.views import View
-from django.utils.decorators import method_decorator
-from django.views.decorators.csrf import csrf_exempt
+"""Views for user authentication, info, and portfolios"""
 
 import json
 
-from .methods import User, UserInvestmentManager, UserPortfolio
-# Create your views here.
+from django.http import JsonResponse, HttpResponse
+from django.contrib.auth import authenticate
+from django.contrib.auth.models import User
 
-def user(request, user_id):
-    user = User(user_id)
-    info = user.info
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.authtoken.models import Token
+
+from .methods import UserInfo, UserInvestmentManager, UserPortfolio
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def user(request):
+    """user information"""
+
+    user = UserInfo(request.user.id)
+    info = user.info()
     return JsonResponse(info, safe=False)
 
 
-@method_decorator(csrf_exempt, name='dispatch')
-class UserTransaction(View):
-    def get(self, request, user_id):
-        user = UserPortfolio(user_id)
-        df = user.transaction_history
-        result = df.to_dict(orient='records')
-        return JsonResponse(result, safe=False)
+class UserTransaction(APIView):
+    """This class allows fetching, adding, and updating of transactions"""
 
-    def post(self, request, user_id):
+    permission_classes = (IsAuthenticated,)
+
+    def get(self, request):
+        """get user transactions"""
+
+        user_id = request.user.id
+        user = UserPortfolio(user_id)
+        result = user.transaction_history
+        return Response(result)
+
+    def post(self, request):
+        """create user transactions"""
+
         body_unicode = request.body.decode('utf-8')
         body = json.loads(body_unicode)
+        user_id = request.user.id
+
         required_vals = ['amfi_code', 'trx_date', 'trx_type']
-        one_optional_val = ['amount', 'units']
-        user = UserInvestmentManager(user_id)
-        if all(val in body for val in required_vals) and any(val in body for val in one_optional_val):
-            response = user.add_past_transaction(**body)
+        one_reqd_val = ['amount', 'units']
+
+        if all(val in body for val in required_vals) and any(val in body for val in one_reqd_val):
+            user = UserInvestmentManager(user_id)
+            response = user.add_transaction(**body)
         else:
-            error = f"""Error: All required fields are not present.</br>
-                        Please provide all of {', '.join(required_vals)} 
-                        and any one of {' or '.join(one_optional_val)}
-                    """
-            return HttpResponse(error, status=400)
-        return HttpResponse(response)
+            error = (f"Error: All required fields are not present."
+                     f" Please provide all of {', '.join(required_vals)}"
+                     f" and any one of {' or '.join(one_reqd_val)}")
+
+            return Response({'message': error}, status=400)
+        return Response(response)
 
 
-def user_portfolio(request, user_id):
-    user = UserPortfolio(user_id)
-    df = user.fetch_portfolio(with_xirr=True)
-    result = df.to_dict(orient='records')
-    return JsonResponse(result, safe=False)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def user_portfolio(request):
+    """fetch user portfolio"""
+
+    user = UserPortfolio(request.user.id)
+    result = user.fetch_portfolio()
+    return Response(result)
 
 
-def user_investment_summary(request, user_id):
-    user = UserPortfolio(user_id)
+# @csrf_exempt
+def user_registration(request):
+    """register a user"""
+
+    body_unicode = request.body.decode('utf-8')
+    body = json.loads(body_unicode)
+    user = User.objects.create_user(body['username'], body['email'], body['password'])
+    user.last_name = body['last_name']
+    user.last_name = body['first_name']
+    user.save()
+    user_info = UserInfo(user.id)
+    user_created = user_info.create_user(**body)
+    if not user_created:
+        user.delete()
+        return HttpResponse("User creation failed", status=400)
+    return HttpResponse(user.id, status=201)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def user_investment_summary(request):
+    """Investment summary for a user"""
+
+    user = UserPortfolio(request.user.id)
     result = user.investment_summary()
-    return JsonResponse(result, safe=False)
+    return Response(result)
 
 
-class UserFolios(View):
-    def get(self, request, user_id, amfi_code=None):
-        user = User(user_id)
+class UserFolios(APIView):
+    """This class allows fetching, adding, and updating of user folios"""
+
+    permission_classes = (IsAuthenticated,)
+
+    def get(self, request, amfi_code=None):
+        """Get user folios"""
+
+        user = UserInfo(request.user.id)
         result = user.get_folios(amfi_code)
-        return JsonResponse(result, safe=False)
+        return Response(result)
 
-    def post(request, user_id):
-        pass
+    def post(self, request):
+        """Create user folios"""
 
-class UserBanks(View):
-    def get(self, request, user_id):
-        user = User(user_id)
+        body_unicode = request.body.decode('utf-8')
+        body = json.loads(body_unicode)
+        user = UserInvestmentManager(request.user.id)
+        created_folio = user.create_folio(**body)
+        status = created_folio['status']
+        del created_folio['status']
+        return Response(created_folio, status=status)
+
+
+class UserBanks(APIView):
+    """This class allows fetching, creating, and updating of user banks"""
+
+    permission_classes = (IsAuthenticated,)
+
+    def get(self, request):
+        """get user banks"""
+
+        user = UserInfo(request.user.id)
         result = user.get_banks()
-        return JsonResponse(result, safe=False)
-    
-    def post(request, user_id):
-        pass
+        return Response(result)
+
+    def post(self, request):
+        """Create user banks"""
+
+        body_unicode = request.body.decode('utf-8')
+        body = json.loads(body_unicode)
+        user = UserInvestmentManager(request.user.id)
+
+        added_bank = user.create_bank(**body)
+        status = added_bank['status']
+        del added_bank['status']
+        return Response(added_bank, status=status)
+
+
+class AuthenticationView(APIView):
+    """this class allows fetching of user info and login"""
+
+    permission_classes = (AllowAny,)
+
+    def get(self, request):
+        """get user info"""
+
+        content = {'message': 'Hello, World!'}
+        return Response(content)
+
+    def post(self, request):
+        """Login a user"""
+
+        body_unicode = request.body.decode('utf-8')
+        body = json.loads(body_unicode)
+        username = body['username']
+        password = body['password']
+        user = authenticate(username=username, password=password)
+        if not user:
+            return Response({'Error': 'Invalid userid or password'}, status=401)
+        token, _ = Token.objects.get_or_create(user=user)
+        return Response({'Token': token.key})
+
+
+@api_view(['POST'])
+def check_email(request):
+    """Check if an email is available at the time of signup"""
+
+    body_unicode = request.body.decode('utf-8')
+    body = json.loads(body_unicode)
+    email = body['email']
+    count = User.objects.filter(email=email).count()
+    if count:
+        return Response({"message": "Email already exists"})
+    else:
+        return Response({"message": "You're good to go"})

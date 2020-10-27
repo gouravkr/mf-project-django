@@ -1,4 +1,4 @@
-"""Defines utility functions for user with methods.py"""
+"""Defines utility methods for use in methods.py"""
 
 import numpy as np
 
@@ -13,7 +13,7 @@ def xirr_np(dates, amounts, guess=0.05, step=0.05):
     limit = 100
     residual = 1
 
-    #test
+    # test
     dex = np.sum(amounts/((1.05+guess)**years)) < np.sum(amounts/((1+guess)**years))
     mul = 1 if dex else -1
 
